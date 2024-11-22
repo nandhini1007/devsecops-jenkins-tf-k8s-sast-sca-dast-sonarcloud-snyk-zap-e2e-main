@@ -60,7 +60,12 @@ pipeline {
 				archiveArtifacts artifacts: 'zap_report.html'
 		    }
 	     }
-       } 
+       }
+	stage('JiraNotification'){
+		steps{
+			jiraComment body: 'Comment sent from Jenkins ', issueKey: 'threats'
+		}
+	}
 }
 }
 
