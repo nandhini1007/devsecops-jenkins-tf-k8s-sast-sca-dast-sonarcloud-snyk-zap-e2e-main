@@ -11,61 +11,54 @@ pipeline {
 		}
 
 	stage('RunSCAAnalysisUsingSnyk') {
-            steps {		
-				withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
-					sh 'mvn snyk:test -fn'
-				}
-			}
-    }	
-	   
-	stage('Build') { 
-            steps { 
-               withDockerRegistry([credentialsId: "dockerlogin", url: ""]) {
-                 script{
-                 app =  docker.build("myimg")
-                 }
-               }
-            }
-    }
-
-	stage('Push') {
-            steps {
-                script{
-                    docker.withRegistry('https://120569624922.dkr.ecr.us-east-2.amazonaws.com', 'ecr:us-east-2:aws-credentials') {
-                    app.push("latest")
+            // steps {		
+			// 	withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
+			// 		sh 'mvn snyk:test -fn'
+			// 	}
+			// }
+			steps {        
+                withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
+                    script {
+                        def snykResult = sh(script: 'mvn snyk:test -fn', returnStatus: true)
+                        if (snykResult != 0) {
+                            currentBuild.result = 'UNSTABLE'
+                            createJiraIssue("Snyk identified vulnerabilities in the project. Please review.")
+                        }
                     }
                 }
             }
-    	}
+    }	
 	   
-	stage('Kubernetes Deployment of EasyBugg Web Application') {
-	   steps {
-	      withKubeConfig([credentialsId: 'kubelogin']) {
-		  sh('kubectl delete all --all -n devsecops')
-		  sh ('kubectl apply -f deployment.yaml --namespace=devsecops')
-		}
-	      }
-   	}
-	   
-	stage ('wait_for_testing'){
-	   steps {
-		   sh 'pwd; sleep 180; echo "Application has been deployed on K8S"'
-	   	}
-	   }
-	   
-	stage('RunDASTUsingZAP') {
-          steps {
-		    withKubeConfig([credentialsId: 'kubelogin']) {
-				sh('zap.sh -cmd -quickurl http://$(kubectl get services/easybuggy --namespace=devsecops -o json| jq -r ".status.loadBalancer.ingress[] | .hostname") -quickprogress -quickout ${WORKSPACE}/zap_report.html')
-				archiveArtifacts artifacts: 'zap_report.html'
-		    }
-	     }
-       }
-	stage('JiraNotification'){
-		steps{
-			jiraComment body: 'Comment sent from Jenkins ', issueKey: 'threats'
-		}
-	}
+	stage('Jira Notification') {
+            steps {
+                jiraComment body: 'Pipeline completed. Please review any threats identified.', issueKey: 'THREATS-123'
+            }
+        }
+
+   }
 }
+def createJiraIssue(String issueDescription) {
+    script {
+        httpRequest acceptType: 'APPLICATION_JSON',
+                    contentType: 'APPLICATION_JSON',
+                    httpMode: 'POST',
+                    url: 'https://cloudops-1.atlassian.net/',
+                    requestBody: """
+                    {
+                        "fields": {
+                            "project": {
+                                "key": "KAN"
+                            },
+                            "summary": "Threats Identified in Jenkins Pipeline",
+                            "description": "${issueDescription}",
+                            "issuetype": {
+                                "name": "Bug"
+                            }
+                        }
+                    }
+                    """,
+                    authentication: 'jira-credentials'
+    }
 }
+
 
